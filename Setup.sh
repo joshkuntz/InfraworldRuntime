@@ -28,11 +28,10 @@ if [ ! -d "$UE_ROOT" ]; then
     exit 1
 fi;
 
-UE_PREREQUISITES="${UE_ROOT}/Engine/Extras/ThirdPartyNotUE/SDKs/HostLinux/Linux_x64/v13_clang-7.0.1-centos7/x86_64-unknown-linux-gnu"
-###############################################################################
-
-OPENSSL_LIB="${UE_ROOT}/Engine/Source/ThirdParty/OpenSSL/1_0_2h/lib/Linux/x86_64-unknown-linux-gnu"
-OPENSSL_INCLUDE="${UE_ROOT}/Engine/Source/ThirdParty/OpenSSL/1_0_2h/include/Linux/x86_64-unknown-linux-gnu"
+# TODO: Make this more configurable...
+UE_PREREQUISITES="${UE_ROOT}/Engine/Extras/ThirdPartyNotUE/SDKs/HostLinux/Linux_x64/v15_clang-8.0.1-centos7/x86_64-unknown-linux-gnu"
+OPENSSL_LIB="${UE_ROOT}/Engine/Source/ThirdParty/OpenSSL/1.1.1c/lib/Linux/x86_64-unknown-linux-gnu"
+OPENSSL_INCLUDE="${UE_ROOT}/Engine/Source/ThirdParty/OpenSSL/1.1.1c/include/Linux/x86_64-unknown-linux-gnu"
 
 echo "SCRIPT_DIR=${SCRIPT_DIR}"
 echo "GRPC_ROOT=${GRPC_ROOT}"
@@ -50,7 +49,10 @@ if [ $(uname) != 'Linux' ]; then
     exit 1
 fi;
 
-# Clone or pull
+# JOSH DID THIS, always clean up the repo before doing anything
+VAR_CLEAN_REPO="true"
+
+# Clone or pull GRPC locally
 if [ ! -d "$GRPC_ROOT" ]; then
     echo "Cloning repo into ${GRPC_ROOT}"
     git clone $REMOTE_ORIGIN $GRPC_ROOT
@@ -64,6 +66,7 @@ echo "Checking out branch ${VAR_GIT_BRANCH}"
 (cd $GRPC_ROOT && git fetch)
 (cd $GRPC_ROOT && git checkout -f)
 (cd $GRPC_ROOT && git checkout -t origin/$VAR_GIT_BRANCH || true)
+
 
 # Update submodules
 (cd $GRPC_ROOT && git submodule update --init)
@@ -124,7 +127,9 @@ export VALID_CONFIG_gcov=0
 # force compile protobuf, libz and libares
 export HAS_SYSTEM_CARES=false
 export HAS_SYSTEM_PROTOBUF=false
-export HAS_SYSTEM_ZLIB=false
+#export HAS_SYSTEM_ZLIB=false
+# JOSH ADDED THIS
+export HAS_SYSTEM_ZLIB=true 
 
 # funny, but in grpc Makefile LD and LDXX associated with compilers
 export LD="${CC}"
@@ -140,7 +145,7 @@ export CXXFLAGS_FOR_BUILD=${CXXFLAGS}
 
 export LIBRARY_PATH="${UE_PREREQUISITES}/usr/lib64"
 
-export LDFLAGS="-L${UE_ROOT}/Engine/Source/ThirdParty/Linux/LibCxx/lib/Linux/${UNAME_ARCH} -L${OPENSSL_LIB} -fuse-ld=${UE_PREREQUISITES}/bin/lld-gnu"
+export LDFLAGS="-L${UE_ROOT}/Engine/Source/ThirdParty/Linux/LibCxx/lib/Linux/${UNAME_ARCH} -Wl--exlude-libs,libboringssl.a -L${OPENSSL_LIB} -fuse-ld=${UE_PREREQUISITES}/bin/lld-gnu"
 export LDFLAGS_FOR_BUILD=${LDFLAGS}
 
 export LDLIBS="-lc++ -lc++abi -lc"
@@ -159,8 +164,14 @@ fi
 
 echo "CFLAGS=${CFLAGS}, CXXFLAGS=${CXXFLAGS}, LDFLAGS=${LDFLAGS}, LDLIBS=${LDLIBS}, PROTOBUF_LDFLAGS_EXTRA=${PROTOBUF_LDFLAGS_EXTRA}"
 
-# Build GRPC
-(cd $GRPC_ROOT && make CC=${CC} CXX=${CXX})
+# Override GRPC's Makefile with ours to ensure 
+#  - BoringSSL and ZLIB are not built by GRPC
+#  - We use UnrealEngine's versions
+# TODO: Ideally we wouldn't modify grpc, and we'd only change this file
+cp josh_grpc_Makefile $GRPC_ROOT/Makefile
+
+# JOSH ADDED EMBED_OPENSSL=false EMBED_ZLIB=false
+(cd $GRPC_ROOT && EMBED_ZLIB=false EMBED_OPENSSL=false make CC=${CC} CXX=${CXX})
 
 # Copy artifacts
 LIBS_DIR="${SCRIPT_DIR}/GrpcLibraries"
@@ -221,23 +232,23 @@ echo "Copying executables to ${ARCH_BIN_DIR}"
 
 #
 # Build go support
-GOROOT_DIR="${GRPC_ROOT}/go_packages"
-GOPROTO_DIR="${GOROOT_DIR}/src/github.com/golang/protobuf"
+#GOROOT_DIR="${GRPC_ROOT}/go_packages"
+#GOPROTO_DIR="${GOROOT_DIR}/src/github.com/golang/protobuf"
 
-echo "Building golang support in ${GOPROTO_DIR}"
-if [ ! -d "${GOPROTO_DIR}" ]; then
-    (cd $GRPC_ROOT && git clone $GOSUPPORT_REMOTE_ORIGIN $GOPROTO_DIR)
-else
-    (cd $GOPROTO_DIR && git pull)
-fi
+#echo "Building golang support in ${GOPROTO_DIR}"
+#if [ ! -d "${GOPROTO_DIR}" ]; then
+#    (cd $GRPC_ROOT && git clone $GOSUPPORT_REMOTE_ORIGIN $GOPROTO_DIR)
+#else
+#    (cd $GOPROTO_DIR && git pull)
+#fi
 
 # Add gopath with protobuf libs
-export GOPATH=$GOROOT_DIR
+#export GOPATH=$GOROOT_DIR
 
 #
 # Run go build
-(cd "${GOPROTO_DIR}/protoc-gen-go" && go build)
-(cp "${GOPROTO_DIR}/protoc-gen-go/protoc-gen-go" $ARCH_BIN_DIR)
+#(cd "${GOPROTO_DIR}/protoc-gen-go" && go build)
+#(cp "${GOPROTO_DIR}/protoc-gen-go/protoc-gen-go" $ARCH_BIN_DIR)
 
 # Strip binaries (programs)
 (cd $ARCH_BIN_DIR && strip -S *)
